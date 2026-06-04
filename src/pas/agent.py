@@ -13,7 +13,7 @@ class SimpleAgent:
         lowered = user_input.lower()
 
         if " then " in lowered:
-            tasks = lowered.split(" then ")
+            tasks = [t.strip() for t in lowered.split(" then ") if t.strip()]
             return {
                 "action": "multi_step",
                 "input": tasks
@@ -24,12 +24,32 @@ class SimpleAgent:
             return {
                 "action": "math_problem"
             }
-
-        if lowered.startswith("calc"):
+        
+        elif lowered.startswith("analyze"):
+            self.state.mode = "thinking"
+            parts = user_input.split(maxsplit=1)
+            payload = parts[1] if len(parts) > 1 else ""
+            return {
+                "action": ["web_scrapper", "summarizer"],
+                "input": payload
+            }
+        
+        elif lowered.startswith("scrape"):
             self.state.mode = "idle"
+            parts = user_input.split(maxsplit=1)
+            payload = parts[1] if len(parts) > 1 else ""
+            return {
+                "action": "web_scrapper",
+                "input": payload
+            }
+
+        elif lowered.startswith("calc"):
+            self.state.mode = "idle"
+            parts = user_input.split(maxsplit=1)
+            payload = parts[1] if len(parts) > 1 else ""
             return {
                 "action": "calculator",
-                "input": user_input[5:]
+                "input": payload
             }
 
         elif "last result" in lowered:
@@ -49,6 +69,15 @@ class SimpleAgent:
             self.state.mode = "idle"
             return {
                 "action": "intro"
+            }
+
+        elif "summarize" in lowered:
+            self.state.mode = "idle"
+            parts = user_input.split(maxsplit=1)
+            payload = parts[1] if len(parts) > 1 else ""
+            return {
+                "action": "summarizer",
+                "input": payload
             }
 
         else:
@@ -72,42 +101,96 @@ class SimpleAgent:
                 results.append(result)
 
             return {
+                "type": "multi_task",
                 "success": True,
                 "result": results
             }
 
-        if action == "show_history":
-            return {"success": True,
-                    "result": self.state.history}
+        if isinstance(action, list):
+            results = []
+            last_output = plan.get("input")
+            for i, act in enumerate(action):
+                tool = TOOLS.get(act)
+                if not tool:
+                    err = {
+                        "type": "error",
+                        "success": False,
+                        "result": f"Tool '{act}' not found in pipeline"
+                    }
+                    results.append({act: err})
+                    break
 
-        elif action == "unknown":
-            return {"success": True,
-                    "result": "I don't understand that command."}
+                try:
+                    res = tool(last_output)
+                except Exception as e:
+                    res = {"type": "error", "success": False, "result": str(e)}
+
+                results.append({act: res})
+
+                if isinstance(res, dict):
+                    if "result" in res and isinstance(res["result"], (str, list, dict)):
+                        last_output = res["result"]
+                    elif "result" in res and isinstance(res["result"], dict) and "content" in res["result"]:
+                        last_output = res["result"]["content"]
+                    else:
+                        last_output = res
+                else:
+                    last_output = res
+
+            self.state.add_trace(results)
+
+            return {
+                "type": "state_multi_task",
+                "success": True,
+                "result": results
+            }
+
+
+        if action == "show_history":
+            return {
+                "type": "nested",
+                "success": True,
+                "result": self.state.history
+                }
 
         elif action == "last_result":
-            return {"success": True,
-                    "result": self.state.last_result}
+            return {
+                "type": "single_task",
+                "success": True,
+                "result": self.state.last_result
+                }
         
         elif action == "intro":
-            return {"success": True,
-                    "result": "Hello! I'm PAS, Primitive Agentic System."}
+            return {
+                "type": "single_task",
+                "success": True,
+                "result": "Hello! I'm PAS, Primitive Agentic System."
+                }
         
         elif action == "math_problem":
-            result = TOOLS["math_problem"]()
-            self.state.set_result(result)
+            self.state.mode = "waiting_answer"
+            return TOOLS["math_problem"]()
+
+        elif action == "unknown":
             return {
+                "type": "ood",
                 "success": True,
-                "result": result["result"]
-            }
+                "result": "I don't understand that command."
+                }
 
         tool = TOOLS.get(action)
 
         if not tool:
-            return f"{action} tool not founded"
+            return {
+                "type": "error",
+                "success": False,
+                "result": f"{action} tool not found"
+            }
 
-        result = tool(plan["input"])
-
-        self.state.set_result(result)
+        try:
+            result = tool(plan["input"])
+        except Exception as e:
+            result = {"type": "error", "success": False, "result": str(e)}
 
         return result
 
@@ -120,11 +203,13 @@ class SimpleAgent:
             last_problem = self.state.last_result
             if answer == last_problem["answer"]:
                 result = {
+                    "type": "single_task",
                     "success": True,
                     "result": "Correct! Well done."
                 }
             else:
                 result = {
+                    "type": "single_task",
                     "success": False,
                     "result": f"Wrong! The correct answer was {last_problem['answer']}."
                 }
@@ -139,6 +224,8 @@ class SimpleAgent:
         plan = self.think(user_input)
 
         result = self.act(plan)
+
+        self.state.set_result(result)
 
         self.state.add_history("agent", str(result))
 

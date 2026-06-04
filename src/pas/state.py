@@ -4,6 +4,7 @@ class AgentState:
         self.mode = "idle"
         self.last_result = None
         self.current_goal = None
+        self.trace = []
 
     def add_history(self, role, content):
         self.history.append({
@@ -16,3 +17,6 @@ class AgentState:
 
     def set_goal(self, goal):
         self.current_goal = goal
+
+    def add_trace(self, trace):
+        self.trace.append(trace)

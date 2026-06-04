@@ -1,17 +1,69 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+from typing import Dict, Optional
+
+_HAS_REQUESTS = True
+_HAS_BS4 = True
+try:
+    import requests
+except Exception:
+    _HAS_REQUESTS = False
+
+try:
+    from bs4 import BeautifulSoup
+except Exception:
+    _HAS_BS4 = False
+
 def calculator(expression):
     """
     Simple calculator.
     """
+    import ast
+
+    allowed_nodes = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Num,
+        ast.Load,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Mod,
+        ast.Pow,
+        ast.USub,
+        ast.UAdd,
+        ast.FloorDiv,
+        ast.Call,
+        ast.Name,
+        ast.Tuple,
+    )
 
     try:
-        result = eval(expression)
+        node = ast.parse(expression, mode="eval")
+
+        for n in ast.walk(node):
+            if not isinstance(n, allowed_nodes):
+                return {
+                    "type": "error",
+                    "success": False,
+                    "result": "Unsupported expression"
+                }
+
+        compiled = compile(node, filename="<ast>", mode="eval")
+        result = eval(compiled, {"__builtins__": {}}, {})
+
         return {
+            "type": "single_task",
             "success": True,
             "result": f"The answer of {expression} is {result}"
         }
 
     except Exception as e:
         return {
+            "type": "error",
             "success": False,
             "result": str(e)
         }
@@ -27,13 +79,114 @@ def math_problem_gen():
     answer = num1 + num2
 
     return {
+        "type": "state_single_task",
         "success": True,
         "result": f"What is {num1} + {num2}?",
         "answer": answer
     }
 
+def summarizer(text):
+    """
+    Summarize text using Hugging Face transformers.
+    """
+    from transformers import pipeline
+    summarizer = pipeline("summarization", model="t5-small")
+    summary = summarizer(f"summarize: {text}", max_length=60, min_length=20, do_sample=False)
+
+    return {
+        "type": "single_task",
+        "success": True,
+        "result": summary[0]["summary_text"]
+    }
+
+def scrape_web(url: str) -> Dict[str, Optional[str]]:
+    """
+    Do web scrapping.
+    """
+    fallback_result = {
+        "title": None, 
+        "content": None, 
+        "status": "failed", 
+        "error": None
+    }
+    
+    if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        fallback_result["error"] = "Invalid URL format"
+        return {
+            "type": "nested_single",
+            "success": False,
+            "result": fallback_result
+        }
+
+    if not _HAS_REQUESTS or not _HAS_BS4:
+        fallback_result["error"] = "Missing optional dependencies: requests or bs4"
+        return {
+            "type": "nested_single",
+            "success": False,
+            "result": fallback_result
+        }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+
+        response.raise_for_status()
+
+    except Exception as e:
+        msg = str(e)
+        if "timeout" in msg.lower():
+            fallback_result["error"] = "Request timeout"
+        elif "connection" in msg.lower():
+            fallback_result["error"] = "Connection error"
+        else:
+            status_code = getattr(e, 'response', None)
+            if status_code is not None and hasattr(status_code, 'status_code'):
+                fallback_result["error"] = f"HTTP Error: {status_code.status_code}"
+            else:
+                fallback_result["error"] = f"Request Error: {msg}"
+
+        return {
+            "type": "nested_single",
+            "success": False,
+            "result": fallback_result
+        }
+
+    try:
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        title_tag = soup.find("title")
+        title = title_tag.get_text(strip=True) if title_tag else "No Title Found"
+        
+        for script_or_style in soup(["script", "style"]):
+            script_or_style.decompose()
+            
+        content = soup.get_text(separator="\n", strip=True)
+        fallback_result["title"] = title
+        fallback_result["content"] = content
+        fallback_result["status"] = "success"
+        
+        return {
+            "type": "nested_single",
+            "success": True,
+            "result": fallback_result
+        }
+        
+    except Exception as parse_err:
+        fallback_result["error"] = f"Parsing Error: {str(parse_err)}"
+        return {
+            "type": "nested_single",
+            "success": False,
+            "result": fallback_result
+        }
+
+
 
 TOOLS = {
     "calculator": calculator,
-    "math_problem": math_problem_gen
+    "math_problem": math_problem_gen,
+    "summarizer": summarizer,
+    "web_scrapper": scrape_web
 }
