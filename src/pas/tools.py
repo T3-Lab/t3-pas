@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from typing import Dict, Optional
+from .state import AgentState
 
 _HAS_REQUESTS = True
 _HAS_BS4 = True
@@ -25,7 +26,7 @@ def calculator(expression):
         ast.Expression,
         ast.BinOp,
         ast.UnaryOp,
-        ast.Num,
+        ast.Constant,
         ast.Load,
         ast.Add,
         ast.Sub,
@@ -189,4 +190,11 @@ TOOLS = {
     "math_problem": math_problem_gen,
     "summarizer": summarizer,
     "web_scrapper": scrape_web
+}
+
+STATE_MAP = {
+    "calculator": AgentState.CALCULATING,
+    "math_problem": AgentState.WAITING_ANSWER,
+    "summarizer": AgentState.SUMMARIZING,
+    "web_scrapper": AgentState.WEB_SCRAPING
 }

@@ -1,9 +1,17 @@
-from .tools import TOOLS
+from .tools import TOOLS, STATE_MAP
 
 class SimpleAgent:
+    def __init__(self, context):
+        self.context = context
 
-    def __init__(self, state):
-        self.state = state
+    def assign_goal(self, goal):
+        self.context.receive_new_goal(goal)
+
+    def set_state(self, new_state):
+        self.context.transition_to(new_state)
+    
+    def goal_reached(self):
+        self.context.mark_goal_reached()
 
     def think(self, user_input):
         """
@@ -20,13 +28,11 @@ class SimpleAgent:
             }
         
         if "math problem" in lowered:
-            self.state.mode = "waiting_answer"
             return {
                 "action": "math_problem"
             }
         
         elif lowered.startswith("analyze"):
-            self.state.mode = "thinking"
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
@@ -35,7 +41,6 @@ class SimpleAgent:
             }
         
         elif lowered.startswith("scrape"):
-            self.state.mode = "idle"
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
@@ -44,7 +49,6 @@ class SimpleAgent:
             }
 
         elif lowered.startswith("calc"):
-            self.state.mode = "idle"
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
@@ -52,27 +56,7 @@ class SimpleAgent:
                 "input": payload
             }
 
-        elif "last result" in lowered:
-            self.state.mode = "idle"
-            return {
-                "action": "last_result",
-                "input": None
-            }
-
-        elif lowered == "history":
-            self.state.mode = "idle"
-            return {
-                "action": "show_history"
-            }
-        
-        elif "intro" in lowered:
-            self.state.mode = "idle"
-            return {
-                "action": "intro"
-            }
-
         elif "summarize" in lowered:
-            self.state.mode = "idle"
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
@@ -81,7 +65,6 @@ class SimpleAgent:
             }
 
         else:
-            self.state.mode = "idle"
             return {
                 "action": "unknown"
             }
@@ -108,67 +91,35 @@ class SimpleAgent:
 
         if isinstance(action, list):
             results = []
-            last_output = plan.get("input")
+            tool = TOOLS.get(action[0], None)
             for i, act in enumerate(action):
-                tool = TOOLS.get(act)
-                if not tool:
-                    err = {
-                        "type": "error",
-                        "success": False,
-                        "result": f"Tool '{act}' not found in pipeline"
-                    }
-                    results.append({act: err})
-                    break
+                if i == 0:
+                    self.set_state(STATE_MAP.get(act))
+                    result = tool(plan["input"])
+                    results.append(result)
 
-                try:
-                    res = tool(last_output)
-                except Exception as e:
-                    res = {"type": "error", "success": False, "result": str(e)}
-
-                results.append({act: res})
-
-                if isinstance(res, dict):
-                    if "result" in res and isinstance(res["result"], (str, list, dict)):
-                        last_output = res["result"]
-                    elif "result" in res and isinstance(res["result"], dict) and "content" in res["result"]:
-                        last_output = res["result"]["content"]
-                    else:
-                        last_output = res
                 else:
-                    last_output = res
+                    tool = TOOLS.get(act, None)
+                    if not tool:
+                        results.append({
+                            "type": "error",
+                            "success": False,
+                            "result": f"{act} tool not found"
+                        })
+                        continue
 
-            self.state.add_trace(results)
+                    self.set_state(STATE_MAP.get(act))
+                    result = tool(results[-1]["result"])
+                    results.append(result)
 
             return {
                 "type": "state_multi_task",
                 "success": True,
                 "result": results
             }
-
-
-        if action == "show_history":
-            return {
-                "type": "nested",
-                "success": True,
-                "result": self.state.history
-                }
-
-        elif action == "last_result":
-            return {
-                "type": "single_task",
-                "success": True,
-                "result": self.state.last_result
-                }
         
-        elif action == "intro":
-            return {
-                "type": "single_task",
-                "success": True,
-                "result": "Hello! I'm PAS, Primitive Agentic System."
-                }
-        
-        elif action == "math_problem":
-            self.state.mode = "waiting_answer"
+        if action == "math_problem":
+            self.set_state(STATE_MAP.get("math_problem"))
             return TOOLS["math_problem"]()
 
         elif action == "unknown":
@@ -178,7 +129,7 @@ class SimpleAgent:
                 "result": "I don't understand that command."
                 }
 
-        tool = TOOLS.get(action)
+        tool = TOOLS.get(action, None)
 
         if not tool:
             return {
@@ -188,6 +139,7 @@ class SimpleAgent:
             }
 
         try:
+            self.set_state(STATE_MAP.get(action))
             result = tool(plan["input"])
         except Exception as e:
             result = {"type": "error", "success": False, "result": str(e)}
@@ -198,9 +150,23 @@ class SimpleAgent:
         """
         Full agent loop.
         """
-        if self.state.mode == "waiting_answer" and user_input.strip().isdigit():
+        if self.context.state.value == "waiting_answer" and user_input.strip().isdigit():
             answer = int(user_input.strip())
-            last_problem = self.state.last_result
+            last_problem = self.context.last_result
+            if last_problem.get("type") != "state_single_task":
+                if last_problem.get("type") == "multi_task":
+                    for res in reversed(last_problem.get("result", [])):
+                        if isinstance(res, dict) and "answer" in res.keys():
+                            last_problem = res
+                            break
+
+                else:
+                    return {
+                        "type": "error",
+                        "success": False,
+                        "result": "No math problem awaiting answer."
+                    }
+                
             if answer == last_problem["answer"]:
                 result = {
                     "type": "single_task",
@@ -210,23 +176,26 @@ class SimpleAgent:
             else:
                 result = {
                     "type": "single_task",
-                    "success": False,
+                    "success": True,
                     "result": f"Wrong! The correct answer was {last_problem['answer']}."
                 }
-            self.state.set_result(result)
-            self.state.mode = "idle"
+            self.context.set_result(result)
+            self.goal_reached()
             return result
-        
-        self.state.mode = "idle"
 
-        self.state.add_history("user", user_input)
+        self.context.add_history("user", user_input)
+
+        self.assign_goal(user_input)
 
         plan = self.think(user_input)
 
         result = self.act(plan)
 
-        self.state.set_result(result)
+        if self.context.state.value != "waiting_answer":
+            self.goal_reached()
 
-        self.state.add_history("agent", str(result))
+        self.context.set_result(result)
+
+        self.context.add_history("agent", str(result))
 
         return result
