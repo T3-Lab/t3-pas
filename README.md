@@ -13,17 +13,21 @@ python -m src.pas
 
 ```bash
 === Welcome! ===
-= Commands:
-intro
+* Agent Commands:
 calc <expression>
 summarize <text>
 scrape <url>
 analyze <url>
+math problem
+
+* Utility Commands:
+intro
 history
 last result
-math problem
+see trace
+reset
 exit
-= You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history'
+* You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history'
 
 You > intro
 
@@ -31,33 +35,27 @@ Agent > Hello! I'm PAS, Primitive Agentic System.
 
 You > math problem
 
-Agent > What is 100 + 43?
+Agent > What is 81 + 14?
 
-You > 143
+You > 95
 
 Agent > Correct! Well done.
 
-You > last result
+You > see trace
 
-Agent > {'type': 'single_task', 'success': True, 'result': 'Correct! Well done.'}
+Agent > New goal assigned: math problem
+Agent State: IDLE -> PLANNING
+Agent State: PLANNING -> WAITING_ANSWER
+Agent State: WAITING_ANSWER -> IDLE
+Goal reached: math problem
 
 You > history
 
-Agent > intro
-{'type': 'single_task', 'success': True, 'result': "Hello! I'm PAS, Primitive Agentic System."}
-math problem
-{'type': 'state_single_task', 'success': True, 'result': 'What is 100 + 43?', 'answer': 143}
-last result
-{'type': 'single_task', 'success': True, 'result': {'type': 'single_task', 'success': True, 'result': 'Correct! Well done.'}}
-history
-{'type': 'nested', 'success': True, 'result': [{'role': 'user', 'content': 'intro'}, {'role': 'agent', 'content': '{\'type\': \'single_task\', \'success\': 
-True, \'result\': "Hello! I\'m PAS, Primitive Agentic System."}'}, {'role': 'user', 'content': 'math problem'}, {'role': 'agent', 'content': "{'type': 
-'state_single_task', 'success': True, 'result': 'What is 100 + 43?', 'answer': 143}"}, {'role': 'user', 'content': 'last result'}, {'role': 'agent', 'content':
-"{'type': 'single_task', 'success': True, 'result': {'type': 'single_task', 'success': True, 'result': 'Correct! Well done.'}}"}, {'role': 'user', 'content': 
-'history'}]}
+Agent > math problem
+{'type': 'state_single_task', 'success': True, 'result': 'What is 81 + 14?', 'answer': 95}
 
 You > exit
-Long session: 34.96 seconds
+Long session: 32.47 seconds
 ```
 
 ## Purpose
