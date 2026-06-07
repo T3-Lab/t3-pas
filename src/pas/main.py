@@ -45,7 +45,7 @@ def cli_level(lowered, agent):
                 "result": agent.context.last_result
             }
 
-    elif lowered in "history":
+    elif "history" in lowered:
         return {
             "type": "external_nested",
             "success": True,

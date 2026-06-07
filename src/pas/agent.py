@@ -109,7 +109,12 @@ class SimpleAgent:
                         continue
 
                     self.set_state(STATE_MAP.get(act))
-                    result = tool(results[-1]["result"])
+                    if act == "summarizer":
+                        result = tool(results[-1]["result"]["content"])
+
+                    else:
+                        result = tool(results[-1]["result"])
+                        
                     results.append(result)
 
             return {

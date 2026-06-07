@@ -36,10 +36,7 @@ def calculator(expression):
         ast.Pow,
         ast.USub,
         ast.UAdd,
-        ast.FloorDiv,
-        ast.Call,
-        ast.Name,
-        ast.Tuple,
+        ast.FloorDiv
     )
 
     try:
