@@ -1,11 +1,42 @@
-from .tools import TOOLS, STATE_MAP
+from .tools import TOOLS, STATE_MAP, TYPE_MAP, TOOL_KIND_MAP
+from .planning import SimplePlanner, Goal, GOAL_KIND_MAP
 
 class SimpleAgent:
     def __init__(self, context):
         self.context = context
+        self.planner = SimplePlanner()
+
+    def _multi_parsing(self, user_input):
+        tasks = [t.strip() for t in user_input.lower().split(" then ") if t.strip()]
+        out = {
+            "type": "sequence_goal",
+            "goal": [],
+            "target": []
+        }
+        for task in tasks:
+            result = self.parse(task)
+
+            if result.get("type") == "error":
+                return {"type": "error", "goal": "unknown", "target": None}
+
+            out.get("goal").append(result.get("goal"))
+            out.get("target").append(result.get("target"))
+
+        return out
+
+    def extract_content(self, content):
+        layer_1 = content["result"]
+        if isinstance(layer_1, dict) and "content" in layer_1.keys():
+            layer_2 = layer_1["content"]
+            return layer_2
+        
+        return layer_1
 
     def assign_goal(self, goal):
         self.context.receive_new_goal(goal)
+
+    def assign_plan(self, plan):
+        self.context.set_plan(plan)
 
     def set_state(self, new_state):
         self.context.transition_to(new_state)
@@ -13,194 +44,190 @@ class SimpleAgent:
     def goal_reached(self):
         self.context.mark_goal_reached()
 
-    def think(self, user_input):
-        """
-        Simple decision making.
-        """
+    def goal_failed(self):
+        self.context.mark_goal_failed()
 
-        lowered = user_input.lower()
+    def parse(self, user_input):
+        """
+        Parse user input.
+        """
+        lowered = user_input.lower().strip()
 
         if " then " in lowered:
-            tasks = [t.strip() for t in lowered.split(" then ") if t.strip()]
-            return {
-                "action": "multi_step",
-                "input": tasks
-            }
+            result = self._multi_parsing(user_input)
+            return result
         
-        if "math problem" in lowered:
+        if lowered.startswith("math problem"):
             return {
-                "action": "math_problem"
+                "type": "single_goal",
+                "goal": "math_problem",
+                "target": None
             }
         
         elif lowered.startswith("analyze"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "action": ["web_scrapper", "summarizer"],
-                "input": payload
+                "type": "single_goal",
+                "goal": "analyze_web",
+                "target": payload
             }
         
         elif lowered.startswith("scrape"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "action": "web_scrapper",
-                "input": payload
+                "type": "single_goal",
+                "goal": "web_scrape",
+                "target": payload
             }
 
         elif lowered.startswith("calc"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "action": "calculator",
-                "input": payload
+                "type": "single_goal",
+                "goal": "calculate",
+                "target": payload
             }
 
-        elif "summarize" in lowered:
+        elif lowered.startswith("summarize"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "action": "summarizer",
-                "input": payload
+                "type": "single_goal",
+                "goal": "summarize_content",
+                "target": payload
             }
 
         else:
             return {
-                "action": "unknown"
+                "type": "error",
+                "goal": "unknown",
+                "target": None
             }
 
-    def act(self, plan):
+    def act(self, target, plan, last_result=None):
         """
         Run tool.
         """
+        if last_result is None:
+            last_result = {}
+        current_step = plan.steps[plan.current_step]
+        self.set_state(STATE_MAP[current_step])
+        tool = TOOLS.get(current_step)
+        result = tool(target) if current_step in TOOL_KIND_MAP["with_input"] else tool()
 
-        action = plan["action"]
+        if current_step in GOAL_KIND_MAP["interactive"]:
+            last_result[current_step] = result
 
-        if action == "multi_step":
-            results = []
-            for task in plan["input"]:
-                plan = self.think(task)
-                result = self.act(plan)
-                results.append(result)
+        else:
+            last_result[f"{current_step}({plan.goal.target})"] = result
 
-            return {
-                "type": "multi_task",
-                "success": True,
-                "result": results
-            }
-
-        if isinstance(action, list):
-            results = []
-            tool = TOOLS.get(action[0], None)
-            for i, act in enumerate(action):
-                if i == 0:
-                    self.set_state(STATE_MAP.get(act))
-                    result = tool(plan["input"])
-                    results.append(result)
-
-                else:
-                    tool = TOOLS.get(act, None)
-                    if not tool:
-                        results.append({
-                            "type": "error",
-                            "success": False,
-                            "result": f"{act} tool not found"
-                        })
-                        continue
-
-                    self.set_state(STATE_MAP.get(act))
-                    if act == "summarizer":
-                        result = tool(results[-1]["result"]["content"])
-
-                    else:
-                        result = tool(results[-1]["result"])
-                        
-                    results.append(result)
-
-            return {
-                "type": "state_multi_task",
-                "success": True,
-                "result": results
-            }
+        next_step = self.context.next_plan_step(plan)
         
-        if action == "math_problem":
-            self.set_state(STATE_MAP.get("math_problem"))
-            return TOOLS["math_problem"]()
-
-        elif action == "unknown":
-            return {
-                "type": "ood",
-                "success": True,
-                "result": "I don't understand that command."
-                }
-
-        tool = TOOLS.get(action, None)
-
-        if not tool:
-            return {
-                "type": "error",
-                "success": False,
-                "result": f"{action} tool not found"
-            }
-
-        try:
-            self.set_state(STATE_MAP.get(action))
-            result = tool(plan["input"])
-        except Exception as e:
-            result = {"type": "error", "success": False, "result": str(e)}
-
-        return result
-
+        if next_step is None:
+            return result, last_result
+        
+        result = self.extract_content(result)
+        return self.act(result, plan, last_result)
+        
     def run(self, user_input):
         """
         Full agent loop.
         """
         if self.context.state.value == "waiting_answer" and user_input.strip().isdigit():
             answer = int(user_input.strip())
-            last_problem = self.context.last_result
-            if last_problem.get("type") != "state_single_task":
-                if last_problem.get("type") == "multi_task":
-                    for res in reversed(last_problem.get("result", [])):
-                        if isinstance(res, dict) and "answer" in res.keys():
-                            last_problem = res
-                            break
-
-                else:
-                    return {
-                        "type": "error",
-                        "success": False,
-                        "result": "No math problem awaiting answer."
-                    }
+            last_problem = self.context.artifacts["math_problem"]
                 
             if answer == last_problem["answer"]:
                 result = {
-                    "type": "single_task",
+                    "type": "single_dict",
                     "success": True,
                     "result": "Correct! Well done."
                 }
             else:
                 result = {
-                    "type": "single_task",
+                    "type": "single_dict",
                     "success": True,
                     "result": f"Wrong! The correct answer was {last_problem['answer']}."
                 }
-            self.context.set_result(result)
+            self.context.set_artifacts({"math_problem_answer": result})
             self.goal_reached()
+            
+            self.context.add_history("user", user_input)
+            self.context.add_history("agent", str(result))
+
             return result
 
         self.context.add_history("user", user_input)
+        parse = self.parse(user_input)
 
-        self.assign_goal(user_input)
+        if parse.get("type") == "error":
+            return {"type": "error", "success": False, "result": f"Unknown command {user_input}"}
 
-        plan = self.think(user_input)
+        if parse.get("type") == "sequence_goal":
+            multi_results = {}
+            for i, target in enumerate(parse.get("target")):
+                try:
+                    current_goal = parse.get("goal")[i]
+                    goal = Goal(intent=current_goal, target=target)
+                    plan = self.planner.create_plan(TYPE_MAP[current_goal], goal, user_input.split(" then ")[i])
+                
+                except Exception as e:
+                    return {"type": "error", "success": False, "result": f"Unknown command {user_input}"}
 
-        result = self.act(plan)
+                try:
+                    self.assign_goal(goal)
+                    self.assign_plan(plan)
+
+                except Exception as e:
+                    return {"type": "error", "success": False, "result": f"Failed to assign plan or goal"}
+
+                try:
+                    result, _ = self.act(plan.goal.target, plan)
+                    if goal.intent in GOAL_KIND_MAP["interactive"]:
+                        multi_results[goal.intent] = result
+                    
+                    else:
+                        multi_results[f"{goal.intent}({goal.target})"] = result
+
+                except Exception as e:
+                    self.goal_failed()
+                    return {"type": "error", "success": False, "result": f"unknown command {user_input}"}
+
+            self.context.set_artifacts(multi_results)
+            out = {"type": "multi_dict", "result": multi_results}
+
+            if self.context.state.value != "waiting_answer":
+                self.goal_reached()
+
+            self.context.add_history("agent", str(out))
+
+            return out
+        
+        goal = Goal(intent=parse["goal"], target=parse["target"])
+        plan = self.planner.create_plan(TYPE_MAP[goal.intent], goal, user_input)
+
+        try:
+            self.assign_goal(goal)
+            self.assign_plan(plan)
+        
+        except Exception as e:
+            return {"type": "error", "success": False, "result": f"Failed to assign plan or goal"}
+        
+        try:
+            result, results = self.act(plan.goal.target, plan)
+
+        except Exception as e:
+            self.goal_failed()
+            return {"type": "error", "success": False, "result": f"Failed to do {user_input}"}
 
         if self.context.state.value != "waiting_answer":
             self.goal_reached()
 
-        self.context.set_result(result)
+        self.context.set_artifacts(results)
 
-        self.context.add_history("agent", str(result))
+        self.context.add_history("agent", str(results))
 
         return result

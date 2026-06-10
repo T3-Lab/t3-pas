@@ -4,26 +4,17 @@ from rich.console import Console
 import time
 
 def render(result):
-    if result["type"] in ["single_task", "state_single_task", "ood", "external_single", "error"]:
+    if result["type"] in ["single_dict", "error"]:
         return result["result"]
 
-    elif result["type"] == "multi_task":
+    elif result["type"] == "multi_dict":
         rendered = ""
-        for idx, res in enumerate(result["result"]):
-            rendered += f"\nTask {idx + 1}: {render(res)}\n\n"
+        for key, res in result["result"].items():
+            rendered += f"\nTask {key}: {render(res)}\n\n"
 
         return rendered.strip()
     
-    elif result["type"] == "state_multi_task":
-        return result["result"][-1]["result"]
-
-    elif result["type"] == "external_nested":
-        return "\n".join(
-            item["content"]
-            for item in result["result"]
-        )
-    
-    elif result["type"] == "external_list":
+    elif result["type"] == "single_list":
         return "\n".join(
             v for v in result["result"]
         )
@@ -36,40 +27,40 @@ def render(result):
 
     else:
         return str(result)
-    
+        
 def cli_level(lowered, agent):
-    if "last result" in lowered:
+    if lowered.startswith("see artifact"):
             return {
-                "type": "external_single",
+                "type": "single_dict",
                 "success": True,
-                "result": agent.context.last_result
+                "result": agent.context.artifacts
             }
 
-    elif "history" in lowered:
+    elif lowered.startswith("history"):
         return {
-            "type": "external_nested",
+            "type": "nested_dict",
             "success": True,
             "result": agent.context.history
         }
     
-    elif "intro" in lowered:
+    elif lowered.startswith("intro"):
         return {
-            "type": "external_single",
+            "type": "single_dict",
             "success": True,
             "result": "Hello! I'm PAS, Primitive Agentic System."
         }
     
-    elif "see trace" in lowered:
+    elif lowered.startswith("see trace"):
         return {
-            "type": "external_list",
+            "type": "single_list",
             "success": True,
-            "result": agent.context.trace
+            "result": agent.context.agent_trace
         }
 
-    elif "reset" in lowered:
+    elif lowered.startswith("reset"):
         agent.context = AgentContext()
         return {
-            "type": "external_single",
+            "type": "single_list",
             "success": True,
             "result": "Agent context has been reset."
         }
@@ -92,14 +83,14 @@ def main():
     console.print("scrape <url>")
     console.print("analyze <url>")
     console.print("math problem")
+    console.print("[dim](You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history')[/dim]")
     console.print("\n[blue]* Utility Commands:[/blue]")
     console.print("intro")
     console.print("history")
-    console.print("last result")
+    console.print("see artifact")
     console.print("see trace")
     console.print("reset")
     console.print("exit")
-    console.print("[blue]* You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history'[/blue]")
 
     while True:
 
@@ -110,8 +101,10 @@ def main():
             break
         
         with console.status("[blue]Agent >[/blue] ..."):
-            result = cli_level(user_input.lower(), agent)
-            if not result:
+            cli_res = cli_level(user_input.lower(), agent)
+            if cli_res is not None:
+                result = cli_res
+            else:
                 result = agent.run(user_input)
 
             console.print(f"\n[blue]Agent >[/blue] {render(result)}")

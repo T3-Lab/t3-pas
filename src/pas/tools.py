@@ -54,7 +54,7 @@ def calculator(expression):
         result = eval(compiled, {"__builtins__": {}}, {})
 
         return {
-            "type": "single_task",
+            "type": "single_dict",
             "success": True,
             "result": f"The answer of {expression} is {result}"
         }
@@ -77,7 +77,7 @@ def math_problem_gen():
     answer = num1 + num2
 
     return {
-        "type": "state_single_task",
+        "type": "single_dict",
         "success": True,
         "result": f"What is {num1} + {num2}?",
         "answer": answer
@@ -87,14 +87,21 @@ def summarizer(text):
     """
     Summarize text using Hugging Face transformers.
     """
-    from transformers import pipeline
-    summarizer = pipeline("summarization", model="t5-small")
-    summary = summarizer(f"summarize: {text}", max_length=60, min_length=20, do_sample=False)
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    
+    tokenizer = AutoTokenizer.from_pretrained("t5-small")
+    model = AutoModelForSeq2SeqLM.from_pretrained("t5-small")
+    
+    inputs = tokenizer(f"summarize: {text}", return_tensors="pt")
+    
+    outputs = model.generate(**inputs, max_new_tokens=60, min_new_tokens=20, do_sample=False)
+
+    summary_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     return {
-        "type": "single_task",
+        "type": "single_dict",
         "success": True,
-        "result": summary[0]["summary_text"]
+        "result": summary_text
     }
 
 def scrape_web(url: str) -> Dict[str, Optional[str]]:
@@ -109,9 +116,9 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     }
     
     if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
-        fallback_result["error"] = "Invalid URL format"
+        fallback_result["error"] = f"Invalid URL format"
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": False,
             "result": fallback_result
         }
@@ -119,7 +126,7 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     if not _HAS_REQUESTS or not _HAS_BS4:
         fallback_result["error"] = "Missing optional dependencies: requests or bs4"
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": False,
             "result": fallback_result
         }
@@ -147,7 +154,7 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
                 fallback_result["error"] = f"Request Error: {msg}"
 
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": False,
             "result": fallback_result
         }
@@ -167,7 +174,7 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
         fallback_result["status"] = "success"
         
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": True,
             "result": fallback_result
         }
@@ -175,12 +182,10 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     except Exception as parse_err:
         fallback_result["error"] = f"Parsing Error: {str(parse_err)}"
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": False,
             "result": fallback_result
         }
-
-
 
 TOOLS = {
     "calculator": calculator,
@@ -189,9 +194,22 @@ TOOLS = {
     "web_scrapper": scrape_web
 }
 
+TOOL_KIND_MAP = {
+    "with_input": ["calculator", "summarizer", "web_scrapper"],
+    "no_input": ["math_problem"]
+}
+
 STATE_MAP = {
     "calculator": AgentState.CALCULATING,
     "math_problem": AgentState.WAITING_ANSWER,
     "summarizer": AgentState.SUMMARIZING,
     "web_scrapper": AgentState.WEB_SCRAPING
+}
+
+TYPE_MAP = {
+    "calculate": "single_dict",
+    "math_problem": "single_dict",
+    "summarize_content": "single_dict",
+    "web_scrape": "nested_single_dict",
+    "analyze_web": "nested_multi_dict"
 }
