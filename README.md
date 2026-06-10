@@ -19,15 +19,15 @@ summarize <text>
 scrape <url>
 analyze <url>
 math problem
+(You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history')
 
 * Utility Commands:
 intro
 history
-last result
+see artifact
 see trace
 reset
 exit
-* You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history'
 
 You > intro
 
@@ -35,27 +35,28 @@ Agent > Hello! I'm PAS, Primitive Agentic System.
 
 You > math problem
 
-Agent > What is 81 + 14?
+Agent > What is 9 + 92?
 
-You > 95
+You > 101
 
 Agent > Correct! Well done.
 
 You > see trace
 
-Agent > New goal assigned: math problem
+Agent > New goal assigned: math_problem
 Agent State: IDLE -> PLANNING
+Plan:                        
+ goal: math_problem                        
+ type: single_dict                        
+ steps: ['math_problem']
 Agent State: PLANNING -> WAITING_ANSWER
+Current step: math_problem.
+Plan completed.
 Agent State: WAITING_ANSWER -> IDLE
-Goal reached: math problem
-
-You > history
-
-Agent > math problem
-{'type': 'state_single_task', 'success': True, 'result': 'What is 81 + 14?', 'answer': 95}
+Goal reached: math_problem
 
 You > exit
-Long session: 32.47 seconds
+Long session: 26.90 seconds
 ```
 
 ## Purpose
