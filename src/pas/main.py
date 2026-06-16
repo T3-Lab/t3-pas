@@ -4,72 +4,83 @@ from rich.console import Console
 import time
 
 def render(result):
-    if result["type"] in ["single_task", "state_single_task", "ood", "external_single", "error"]:
+    if result["type"] in ["single_dict", "error"]:
         return result["result"]
 
-    elif result["type"] == "multi_task":
+    elif result["type"] == "nested_multi_dict":
         rendered = ""
-        for idx, res in enumerate(result["result"]):
-            rendered += f"\nTask {idx + 1}: {render(res)}\n\n"
+        for key, res in result["result"].items():
+            rendered += f"\nTask {key}: {render(res)}\n\n"
 
         return rendered.strip()
     
-    elif result["type"] == "state_multi_task":
-        return result["result"][-1]["result"]
-
-    elif result["type"] == "external_nested":
-        return "\n".join(
-            item["content"]
-            for item in result["result"]
-        )
+    elif result["type"] == "nested_single_dict":
+        return result["result"]["content"]
     
-    elif result["type"] == "external_list":
+    elif result["type"] == "single_list":
         return "\n".join(
-            v for v in result["result"]
-        )
-
-    elif result["type"] == "nested_single":
-        return "\n".join(
-            f"{key.capitalize()}: {value}"
-            for key, value in result["result"].items()
+            str(v) for v in result["result"]
         )
 
     else:
         return str(result)
-    
-def cli_level(lowered, agent):
-    if "last result" in lowered:
-            return {
-                "type": "external_single",
-                "success": True,
-                "result": agent.context.last_result
-            }
-
-    elif "history" in lowered:
+        
+def cli_level(console, lowered, agent):
+    if lowered.startswith("see history"):
         return {
-            "type": "external_nested",
+            "type": "single_list",
             "success": True,
             "result": agent.context.history
         }
     
-    elif "intro" in lowered:
+    elif lowered.startswith("intro"):
         return {
-            "type": "external_single",
+            "type": "single_dict",
             "success": True,
             "result": "Hello! I'm PAS, Primitive Agentic System."
         }
     
-    elif "see trace" in lowered:
+    elif lowered.startswith("see trace"):
         return {
-            "type": "external_list",
+            "type": "single_list",
             "success": True,
-            "result": agent.context.trace
+            "result": agent.context.agent_trace
         }
+    
+    elif lowered.startswith("access memory"):
+        splitted = lowered.split(" ")
+        if len(splitted) < 3 or splitted[-1] not in ["episodic", "semantic"]:
+          which = console.input("[cyan]System >[/cyan] Which memory (episodic, semantic): ").lower().strip()\
+        
+        else:
+            which = splitted[-1]
 
-    elif "reset" in lowered:
-        agent.context = AgentContext()
+        memory = agent.context.access_memory(which)
+        if which == "episodic":
+            return {
+                "type": "single_list",
+                "success": True,
+                "result": memory
+            }
+        
+        elif which == "semantic":
+            return {
+                "type": "single_dict",
+                "success": True,
+                "result": memory
+            }
+
+        else:
+            return {
+                "type": "error",
+                "success": False,
+                "result": f"can't access {which}"
+            }
+
+    elif lowered.startswith("reset"):
+        agent.context.access_memory().reset_memory()
         return {
-            "type": "external_single",
+            "type": "single_dict",
             "success": True,
             "result": "Agent context has been reset."
         }
@@ -87,31 +98,38 @@ def main():
 
     console.print("[yellow]=== Welcome! ===[/yellow]")
     console.print("[blue]* Agent Commands:[/blue]")
+    console.print("my name is <str>")
     console.print("calc <expression>")
     console.print("summarize <text>")
     console.print("scrape <url>")
     console.print("analyze <url>")
     console.print("math problem")
+    console.print("[dim](You can also chain tasks using 'then', e.g. 'calc 2 + 2 then math problem')[/dim]")
     console.print("\n[blue]* Utility Commands:[/blue]")
     console.print("intro")
-    console.print("history")
-    console.print("last result")
+    console.print("see history")
     console.print("see trace")
+    console.print("access memory <kind>")
     console.print("reset")
     console.print("exit")
-    console.print("[blue]* You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history'[/blue]")
 
     while True:
 
         user_input = console.input("\nYou > ")
 
         if user_input.lower() == "exit":
-            console.print(f"[cyan]Long session:[/cyan] {(time.time() - elapsed):.2f} seconds")
+            console.print(f"[cyan]System >[/cyan] Long session: {(time.time() - elapsed):.2f} seconds")
             break
+
+        cli_res = cli_level(console, user_input.lower(), agent)
+        if cli_res is not None:
+            result = cli_res
+
+            console.print(f"\n[cyan]System >[/cyan] {render(result)}")
+
+            continue
         
         with console.status("[blue]Agent >[/blue] ..."):
-            result = cli_level(user_input.lower(), agent)
-            if not result:
-                result = agent.run(user_input)
+            result = agent.run_agent(user_input)
 
             console.print(f"\n[blue]Agent >[/blue] {render(result)}")

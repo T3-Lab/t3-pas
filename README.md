@@ -14,48 +14,62 @@ python -m src.pas
 ```bash
 === Welcome! ===
 * Agent Commands:
+my name is <str>
 calc <expression>
 summarize <text>
 scrape <url>
 analyze <url>
 math problem
+(You can also chain tasks using 'then', e.g. 'calc 2 + 2 then math problem')
 
 * Utility Commands:
 intro
-history
-last result
+see history
 see trace
+access memory <kind>
 reset
 exit
-* You can also chain tasks using 'then', e.g. 'calc 2 + 2 then history'
 
 You > intro
 
-Agent > Hello! I'm PAS, Primitive Agentic System.
+System > Hello! I'm PAS, Primitive Agentic System.
+
+You > my name is Nexo Usagi
+
+Agent > Hello Nexo Usagi
 
 You > math problem
 
-Agent > What is 81 + 14?
+Agent > What is 1 + 25?
 
-You > 95
+You > 26
 
 Agent > Correct! Well done.
 
 You > see trace
 
-Agent > New goal assigned: math problem
+System > New goal assigned: math_problem
 Agent State: IDLE -> PLANNING
-Agent State: PLANNING -> WAITING_ANSWER
+Plan:                        
+ goal: math_problem                        
+ steps: ['math_problem']                        
+ output type: single_dict
+Agent State: PLANNING -> EXECUTING
+Current step: math_problem.
+Plan completed.
+Agent State: EXECUTING -> WAITING_ANSWER
 Agent State: WAITING_ANSWER -> IDLE
-Goal reached: math problem
+Goal reached: math_problem
 
-You > history
+You > access memory episodic
 
-Agent > math problem
-{'type': 'state_single_task', 'success': True, 'result': 'What is 81 + 14?', 'answer': 95}
+System > Episode(goal='math_problem', goal_status=<GoalStatus.IN_PROGRESS: 'in_progress'>, actions={'math_problem': {'type': 'single_dict', 'success': True, 
+'result': 'What is 1 + 25?', 'answer': 26}}, timestamp=1781620195.3422866)
+Episode(goal='math_problem', goal_status=<GoalStatus.COMPLETED: 'completed'>, actions={'math_problem': {'type': 'single_dict', 'success': True, 'result': 
+'Correct! Well done.'}}, timestamp=1781620198.6771617)
 
 You > exit
-Long session: 32.47 seconds
+System > Long session: 47.09 seconds
 ```
 
 ## Purpose

@@ -2,7 +2,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from typing import Dict, Optional
-from .state import AgentState
+from dataclasses import dataclass
+from enum import StrEnum, auto
 
 _HAS_REQUESTS = True
 _HAS_BS4 = True
@@ -54,7 +55,7 @@ def calculator(expression):
         result = eval(compiled, {"__builtins__": {}}, {})
 
         return {
-            "type": "single_task",
+            "type": "single_dict",
             "success": True,
             "result": f"The answer of {expression} is {result}"
         }
@@ -66,18 +67,24 @@ def calculator(expression):
             "result": str(e)
         }
     
-def math_problem_gen():
+def math_problem_gen(high_difficulty):
     """
     Generate simple math problem with random number generator.
     """
     import random
 
-    num1 = random.randint(1, 100)
-    num2 = random.randint(1, 100)
+    if high_difficulty:
+        num1 = random.randint(25, 100)
+        num2 = random.randint(25, 100)
+
+    else:
+        num1 = random.randint(1, 25)
+        num2 = random.randint(1, 25)
+    
     answer = num1 + num2
 
     return {
-        "type": "state_single_task",
+        "type": "single_dict",
         "success": True,
         "result": f"What is {num1} + {num2}?",
         "answer": answer
@@ -87,41 +94,44 @@ def summarizer(text):
     """
     Summarize text using Hugging Face transformers.
     """
-    from transformers import pipeline
-    summarizer = pipeline("summarization", model="t5-small")
-    summary = summarizer(f"summarize: {text}", max_length=60, min_length=20, do_sample=False)
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    
+    tokenizer = AutoTokenizer.from_pretrained("t5-small")
+    model = AutoModelForSeq2SeqLM.from_pretrained("t5-small")
+    
+    inputs = tokenizer(f"summarize: {text}", return_tensors="pt")
+    
+    outputs = model.generate(**inputs, max_new_tokens=60, min_new_tokens=20, do_sample=False)
+
+    summary_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     return {
-        "type": "single_task",
+        "type": "single_dict",
         "success": True,
-        "result": summary[0]["summary_text"]
+        "result": summary_text
     }
 
 def scrape_web(url: str) -> Dict[str, Optional[str]]:
     """
     Do web scrapping.
     """
-    fallback_result = {
+    result = {
         "title": None, 
-        "content": None, 
-        "status": "failed", 
-        "error": None
+        "content": None,
     }
     
     if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
-        fallback_result["error"] = "Invalid URL format"
         return {
-            "type": "nested_single",
+            "type": "error",
             "success": False,
-            "result": fallback_result
+            "result": "Invalid URL format"
         }
 
     if not _HAS_REQUESTS or not _HAS_BS4:
-        fallback_result["error"] = "Missing optional dependencies: requests or bs4"
         return {
-            "type": "nested_single",
+            "type": "error",
             "success": False,
-            "result": fallback_result
+            "result": "Missing optional dependencies: requests or bs4"
         }
 
     headers = {
@@ -136,20 +146,23 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     except Exception as e:
         msg = str(e)
         if "timeout" in msg.lower():
-            fallback_result["error"] = "Request timeout"
+            result = "Request timeout"
+
         elif "connection" in msg.lower():
-            fallback_result["error"] = "Connection error"
+            result = "Connection error"
+
         else:
             status_code = getattr(e, 'response', None)
             if status_code is not None and hasattr(status_code, 'status_code'):
-                fallback_result["error"] = f"HTTP Error: {status_code.status_code}"
+                result = f"HTTP Error: {status_code.status_code}"
+
             else:
-                fallback_result["error"] = f"Request Error: {msg}"
+                result = f"Request Error: {msg}"
 
         return {
-            "type": "nested_single",
+            "type": "error",
             "success": False,
-            "result": fallback_result
+            "result": result
         }
 
     try:
@@ -162,36 +175,66 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
             script_or_style.decompose()
             
         content = soup.get_text(separator="\n", strip=True)
-        fallback_result["title"] = title
-        fallback_result["content"] = content
-        fallback_result["status"] = "success"
+        result["title"] = title
+        result["content"] = content
         
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": True,
-            "result": fallback_result
+            "result": result
         }
         
     except Exception as parse_err:
-        fallback_result["error"] = f"Parsing Error: {str(parse_err)}"
+        result = f"Parsing Error: {str(parse_err)}"
         return {
-            "type": "nested_single",
+            "type": "nested_single_dict",
             "success": False,
-            "result": fallback_result
+            "result": result
         }
 
 
+class ToolCategory(StrEnum):
+    SUMMARIZATION = auto()
+    CALCULATION = auto()
+    WEB_SCRAPING = auto()
+    INTERACTION = auto()
+
+
+@dataclass
+class ToolSpec:
+    name: str
+    func: callable
+    requires_input: bool
+    output_type: str
+    category: ToolCategory
 
 TOOLS = {
-    "calculator": calculator,
-    "math_problem": math_problem_gen,
-    "summarizer": summarizer,
-    "web_scrapper": scrape_web
-}
-
-STATE_MAP = {
-    "calculator": AgentState.CALCULATING,
-    "math_problem": AgentState.WAITING_ANSWER,
-    "summarizer": AgentState.SUMMARIZING,
-    "web_scrapper": AgentState.WEB_SCRAPING
+    "calculator": ToolSpec(
+        name="calculator",
+        func=calculator,
+        requires_input=True,
+        output_type="single_dict",
+        category=ToolCategory.CALCULATION
+    ),
+    "math_problem": ToolSpec(
+        name="math_problem",
+        func=math_problem_gen,
+        requires_input=True,
+        output_type="single_dict",
+        category=ToolCategory.INTERACTION
+    ),
+    "summarizer": ToolSpec(
+        name="summarizer",
+        func=summarizer,
+        requires_input=True,
+        output_type="single_dict",
+        category=ToolCategory.SUMMARIZATION
+    ),
+    "web_scraper": ToolSpec(
+        name="web_scraper",
+        func=scrape_web,
+        requires_input=True,
+        output_type="nested_single_dict",
+        category=ToolCategory.WEB_SCRAPING
+    )
 }
