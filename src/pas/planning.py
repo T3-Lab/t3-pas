@@ -9,11 +9,12 @@ class Goal:
     target: str
     status: GoalStatus = GoalStatus.NONE
     interactive: bool = False
+    shift_belief: str=None
 
 
 @dataclass
 class AgentPlan():
-    goal: Goal
+    goal: str
     steps: list
     output_type: str
     current_step: int = 0

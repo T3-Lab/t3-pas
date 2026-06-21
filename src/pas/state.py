@@ -47,7 +47,9 @@ class SemanticMemory:
     def __init__(self):
         self.knowledge = {
             "user_name": None,
-            "user_math_problem_correct": None
+            "internet_request_problem": None,
+            "math_correct_answer": 0,
+            "total_math_question": 0
         }
 
 
@@ -69,8 +71,23 @@ class AgentMemory:
     def add_episode(self, goal, actions):
         self.episodic.episodes.append(Episode(goal.intent, goal.status, actions))
 
-    def update_semantic(self, key, value):
-        self.semantic.knowledge[key] = value
+    def search_episode(self, action):
+        out = []
+        for episode in reversed(self.episodic.episodes):
+            if action in episode.actions.keys():
+                out.append(episode)
+            
+        return out
+
+    def update_semantic(self, key, value, mode="set_value"):
+        if mode == "set_value":
+            self.semantic.knowledge[key] = value
+
+        elif mode == "in_place":
+            self.semantic.knowledge[key] += value
+
+        else:
+            raise ValueError(f"Invalid mode argument {mode}")
 
     def search_semantic(self, key):
         return self.semantic.knowledge.get(key)
@@ -85,6 +102,11 @@ class AgentContext:
     def __init__(self):
         self.history = []
         self.agent_trace = []
+
+        self.belief = {
+            "internet_access": True,
+            "user_math_skill_advance": False
+        }
 
         self.state = AgentState.IDLE
 
@@ -144,6 +166,9 @@ class AgentContext:
                        \n goal: {memory.current_plan.goal} \
                        \n steps: {memory.current_plan.steps} \
                        \n output type: {memory.current_plan.output_type}")
+        
+    def set_belief(self, key, value):
+        self.belief[key] = value
 
     def add_trace(self, trace):
         self.agent_trace.append(trace)
@@ -153,9 +178,9 @@ class AgentContext:
             return self.memory.working
 
         elif kind == "episodic":
-            return self.memory.episodic.episodes
+            return self.memory.episodic
         
         elif kind == "semantic":
-            return self.memory.semantic.knowledge
+            return self.memory.semantic
         
         return self.memory

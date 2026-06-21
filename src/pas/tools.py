@@ -46,7 +46,7 @@ def calculator(expression):
         for n in ast.walk(node):
             if not isinstance(n, allowed_nodes):
                 return {
-                    "type": "error",
+                    "output_type": "error",
                     "success": False,
                     "result": "Unsupported expression"
                 }
@@ -55,14 +55,14 @@ def calculator(expression):
         result = eval(compiled, {"__builtins__": {}}, {})
 
         return {
-            "type": "single_dict",
+            "output_type": "single_dict",
             "success": True,
             "result": f"The answer of {expression} is {result}"
         }
 
     except Exception as e:
         return {
-            "type": "error",
+            "output_type": "error",
             "success": False,
             "result": str(e)
         }
@@ -84,7 +84,7 @@ def math_problem_gen(high_difficulty):
     answer = num1 + num2
 
     return {
-        "type": "single_dict",
+        "output_type": "single_dict",
         "success": True,
         "result": f"What is {num1} + {num2}?",
         "answer": answer
@@ -106,7 +106,7 @@ def summarizer(text):
     summary_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     return {
-        "type": "single_dict",
+        "output_type": "single_dict",
         "success": True,
         "result": summary_text
     }
@@ -122,14 +122,14 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     
     if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
         return {
-            "type": "error",
+            "output_type": "error",
             "success": False,
             "result": "Invalid URL format"
         }
 
     if not _HAS_REQUESTS or not _HAS_BS4:
         return {
-            "type": "error",
+            "output_type": "error",
             "success": False,
             "result": "Missing optional dependencies: requests or bs4"
         }
@@ -160,7 +160,7 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
                 result = f"Request Error: {msg}"
 
         return {
-            "type": "error",
+            "output_type": "error",
             "success": False,
             "result": result
         }
@@ -179,7 +179,7 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
         result["content"] = content
         
         return {
-            "type": "nested_single_dict",
+            "output_type": "nested_single_dict",
             "success": True,
             "result": result
         }
@@ -187,7 +187,7 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     except Exception as parse_err:
         result = f"Parsing Error: {str(parse_err)}"
         return {
-            "type": "nested_single_dict",
+            "output_type": "error",
             "success": False,
             "result": result
         }

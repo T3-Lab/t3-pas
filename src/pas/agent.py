@@ -10,18 +10,16 @@ class SimpleAgent:
     def _multi_parsing(self, user_input):
         tasks = [t.strip() for t in user_input.lower().split(" then ") if t.strip()]
         out = {
-            "type": "sequence_goal",
-            "goal": [],
-            "target": []
+            "goal_type": "sequence_goal",
+            "goal": []
         }
         for task in tasks:
             result = self.parse(task)
 
-            if result.get("type") == "error":
-                return {"type": "error", "goal": "unknown", "target": None}
+            if result["goal_type"] == "error":
+                return {"goal_type": "error", "goal": "unknown"}
 
-            out.get("goal").append(result.get("goal"))
-            out.get("target").append(result.get("target"))
+            out["goal"].append(result["goal"])
 
         return out
     
@@ -69,63 +67,67 @@ class SimpleAgent:
             return result
         
         if lowered.startswith("math problem"):
+            target = self.context.belief["user_math_skill_advance"]
             return {
-                "type": "single_goal",
-                "goal": "math_problem",
-                "target": self.context.access_memory().search_semantic("user_math_problem_correct")
+                "goal_type": "single_goal",
+                "goal": Goal(
+                    intent="math_problem", 
+                    target=target, 
+                    interactive=True, 
+                    shift_belief="user_math_skill_advance")
             }
         
         elif lowered.startswith("analyze"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "type": "single_goal",
-                "goal": "analyze_web",
-                "target": payload
+                "goal_type": "single_goal",
+                "goal": Goal(
+                    intent="analyze_web", 
+                    target=payload,
+                    shift_belief="internet_access")
             }
         
         elif lowered.startswith("scrape"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "type": "single_goal",
-                "goal": "web_scrape",
-                "target": payload
+                "goal_type": "single_goal",
+                "goal": Goal(
+                    intent="web_scrape", 
+                    target=payload,
+                    shift_belief="internet_access")
             }
 
         elif lowered.startswith("calc"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "type": "single_goal",
-                "goal": "calculate",
-                "target": payload
+                "goal_type": "single_goal",
+                "goal": Goal(intent="calculate", target=payload)
             }
 
         elif lowered.startswith("summarize"):
             parts = user_input.split(maxsplit=1)
             payload = parts[1] if len(parts) > 1 else ""
             return {
-                "type": "single_goal",
-                "goal": "summarize_content",
-                "target": payload
+                "goal_type": "single_goal",
+                "goal": Goal(intent="summarize_content", target=payload)
             }
         
         elif lowered.startswith("my name is"):
             parts = user_input.split(maxsplit=3)
             payload = parts[-1] if len(parts) > 3 else ""
             return {
-                "type": "memory_management",
-                "goal": "update_semantic",
-                "target": {"key": "user_name", "value": payload},
+                "goal_type": "memory_management",
+                "goal": Goal(intent="update_semantic", target={"key": "user_name", "value": payload}),
                 "response": f"Hello {payload}"
             }
 
         else:
             return {
-                "type": "error",
-                "goal": "unknown",
-                "target": None
+                "goal_type": "error",
+                "goal": "unknown"
             }
 
     def run_workflow(self, target, plan, result=None, results=None):
@@ -159,31 +161,50 @@ class SimpleAgent:
         Full agent loop.
         """
         self.context.add_history("user", user_input)
+        memory = self.context.access_memory()
 
         if self.context.state == AgentState.WAITING_ANSWER and user_input.strip().isdigit():
             answer = int(user_input.strip())
-            last_problem = self.context.access_memory("episodic")[-1].actions["math_problem"]
-            memory = self.context.access_memory()
+            last_problem = memory.search_episode("math_problem")
+            if last_problem:
+                last_problem = last_problem[0].actions["math_problem"]
 
-            if answer == last_problem["answer"]:
-                result = {
-                    "type": "single_dict",
-                    "success": True,
-                    "result": "Correct! Well done."
-                }
-                memory.update_semantic("user_math_problem_correct", True)
+                if answer == last_problem["answer"]:
+                    result = {
+                        "output_type": "single_dict",
+                        "success": True,
+                        "result": "Correct! Well done.",
+                        "correct": True
+                    }
+                    memory.update_semantic("math_correct_answer", 1, "in_place")
+
+                else:
+                    result = {
+                        "output_type": "single_dict",
+                        "success": True,
+                        "result": f"Wrong! The correct answer was {last_problem['answer']}.",
+                        "correct": False
+                    }
+
+                self.goal_reached()
+                memory.update_semantic("total_math_question", 1, "in_place")
+
+                if len(memory.search_episode("math_problem_answer")) >= 3:
+                    semantic = memory.semantic.knowledge
+                    if (semantic["math_correct_answer"] / semantic["total_math_question"]) > 0.8:
+                        self.context.set_belief(memory.working.current_goal.shift_belief, True)
+
+                    else:
+                        self.context.set_belief(memory.working.current_goal.shift_belief, False)
 
             else:
                 result = {
-                    "type": "single_dict",
-                    "success": True,
-                    "result": f"Wrong! The correct answer was {last_problem['answer']}."
+                    "output_type": "error",
+                    "success": False,
+                    "result": "No math question"
                 }
-                memory.update_semantic("user_math_problem_correct", False)
 
-            self.goal_reached()
-            
-            self.context.access_memory().add_episode(self.context.access_memory("working").current_goal, {"math_problem": result})
+            memory.add_episode(memory.working.current_goal, {"math_problem_answer": result})
 
             self.context.add_history("agent", str(result))
 
@@ -191,19 +212,21 @@ class SimpleAgent:
 
         parse = self.parse(user_input)
 
-        if parse.get("type") == "sequence_goal":
+        if parse["goal_type"] == "sequence_goal":
             multi_results = {}
-            for i, target in enumerate(parse.get("target")):
-                current_goal = parse.get("goal")[i]
-                goal = Goal(intent=current_goal, target=target)
+            for goal in parse["goal"]:
                 plan = self.planner.create_plan(goal)
-                goal.interactive = TOOLS.get("math_problem").name in plan.steps
             
                 self.assign_goal(goal)
                 self.assign_plan(plan)
+
                 try:
                     self.context.to_execution()
                     result, results = self.run_workflow(goal.target, plan)
+
+                    if result is None:
+                        raise ValueError("Result is None implicating there's no step in the plan")
+
                     if goal.interactive:
                         self.context.to_waiting_answer()
 
@@ -216,60 +239,62 @@ class SimpleAgent:
                         else:
                             self.goal_failed()
 
-                    self.context.access_memory().add_episode(goal, results)
+                    memory.add_episode(goal, results)
 
                 except Exception as e:
                     self.goal_failed()
 
-                    result = self._result_format(goal, {"type": "error", "success": False, "result": f"Error when processing user command {goal.intent}({goal.target}) ({str(e)})"})
+                    result = self._result_format(goal, {"output_type": "error", "success": False, "result": f"Error when processing user command {goal.intent}({goal.target}) ({str(e)})"})
                     multi_results.update(result)
 
-                    self.context.access_memory().add_episode(goal, result)
+                    memory.add_episode(goal, result)
 
-            out = {"type": "nested_multi_dict", "result": multi_results}
+            out = {"output_type": "nested_multi_dict", "result": multi_results}
 
             self.context.add_history("agent", str(out))
 
             return out
         
-        elif parse.get("type") == "memory_management":
-            if parse.get("goal") == "update_semantic":
-                memory = self.context.access_memory()
-                target = parse["target"]
-                memory.update_semantic(target["key"], target["value"])
+        elif parse["goal_type"] == "memory_management":
+            goal = parse["goal"]
+            if goal.intent == "update_semantic":
+                memory.update_semantic(goal.target["key"], goal.target["value"])
 
                 out = {
-                    "type": "single_dict",
+                    "output_type": "single_dict",
                     "success": True,
                     "result": parse["response"]
                 }
 
             return out
 
-        elif parse.get("type") == "error":
-            return {"type": "error", "success": False, "result": f"Unknown command {user_input}"}
+        elif parse["goal_type"] == "error":
+            return {"output_type": "error", "success": False, "result": f"Unknown command {user_input}"}
 
         
-        goal = Goal(intent=parse["goal"], target=parse["target"])
+        goal = parse["goal"]
         plan = self.planner.create_plan(goal)
-        goal.interactive = TOOLS.get("math_problem").name in plan.steps
 
         try:
             self.assign_goal(goal)
             self.assign_plan(plan)
         
         except Exception as e:
-            return {"type": "error", "success": False, "result": f"Failed to assign plan or goal ({str(e)})"}
+            return {"output_type": "error", "success": False, "result": f"Failed to assign plan or goal ({str(e)})"}
         
         try:
             self.context.to_execution()
             result, results = self.run_workflow(goal.target, plan)
+
+            if result is None:
+                        raise ValueError("Result is None implicating there's no step in the plan")
+
             if goal.interactive:
                 self.context.to_waiting_answer()
 
         except Exception as e:
             self.goal_failed()
-            return {"type": "error", "success": False, "result": f"Failed to do {user_input} ({str(e)})"}
+            return {"output_type": "error", "success": False, "result": f"Failed to do {user_input} ({str(e)})"}
 
 
         if self.context.state != AgentState.WAITING_ANSWER:
@@ -280,6 +305,6 @@ class SimpleAgent:
                 self.goal_failed()
 
         self.context.add_history("agent", str(results))
-        self.context.access_memory().add_episode(goal, results)
+        memory.add_episode(goal, results)
 
         return result
