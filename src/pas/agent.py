@@ -1,9 +1,9 @@
 from .tools import TOOLS
-from .planning import SimplePlanner, Goal
-from .state import AgentState
+from .planning import Goal, ALT_ACTION_MAP, SimplePlanner
+from .state import AgentState, AgentContext
 
 class SimpleAgent:
-    def __init__(self, context):
+    def __init__(self, context: AgentContext):
         self.context = context
         self.planner = SimplePlanner()
 
@@ -16,23 +16,53 @@ class SimpleAgent:
         for task in tasks:
             result = self.parse(task)
 
-            if result["goal_type"] == "error":
+            if result["goal"] == "unknown":
                 return {"goal_type": "error", "goal": "unknown"}
 
             out["goal"].append(result["goal"])
 
         return out
     
-    def _result_format(self, refer, result):
+    def _result_format(self, refer, action, target, result):
         out = {}
         if isinstance(refer, Goal):
             if refer.interactive:
-                out[refer.intent] = result
+                out[action] = result
 
             else:
-                out[f"{refer.intent}({refer.target})"] = result
+                out[f"{action}({target})"] = result
 
         return out
+    
+    def _connection_check(self, status_code):
+        if status_code == 200:
+            return "success"
+        elif status_code == 0:
+            return "no_connection"
+        elif status_code == -1:
+            return "parse_failed"
+        elif status_code in (429, 500, 502, 503, 504):
+            return "retry"
+        elif status_code in (400, 401, 403, 404, 410):
+            return "fallback"
+        else:
+            return "unknown"
+        
+    def _get_cached_content(self, goal, action, target):
+        memory = self.context.access_memory()
+        results = []
+
+        if not goal.interactive:
+            episodes = memory.search_episode(action, target)
+
+        else:
+            episodes = memory.search_episode(action, target)
+
+        for episode in episodes:
+            result = episode.result
+            results.append(result)
+
+        return results
 
     def extract_content(self, content):
         layer_1 = content["result"]
@@ -55,6 +85,23 @@ class SimpleAgent:
 
     def goal_failed(self):
         self.context.mark_goal_failed()
+
+    def replanning(self, tool, reason):
+        self.context.transition_to(AgentState.REPLANNING)
+        memory = self.context.access_memory("working")
+        valid = self.planner.replan(memory.current_plan, tool, reason)
+        if valid:
+            self.context.add_trace(f"[Replan] New plan: \
+                       \n goal: {memory.current_plan.goal} \
+                       \n steps: {memory.current_plan.steps} \
+                       \n output type: {memory.current_plan.output_type}")
+            
+        else:
+            self.context.add_trace(
+                f"Replan failed: {reason}"
+            )
+        
+        return valid
 
     def parse(self, user_input):
         """
@@ -130,6 +177,37 @@ class SimpleAgent:
                 "goal": "unknown"
             }
 
+    def execute_single_goal(self, goal):
+        plan = self.planner.create_plan(goal)
+            
+        self.assign_goal(goal)
+        self.assign_plan(plan)
+
+        try:
+            self.context.to_execution()
+            result, results = self.run_workflow(goal.target, plan)
+
+            if result is None:
+                raise ValueError("Result is None implicating there's no step in the plan")
+
+            if goal.interactive:
+                self.context.to_waiting_answer()
+
+            if self.context.state != AgentState.WAITING_ANSWER:
+                if result["success"]:
+                    self.goal_reached()
+
+                else:
+                    self.goal_failed()
+
+        except Exception as e:
+            self.goal_failed()
+
+            result = {"output_type": "single_dict", "success": False, "result": f"Error when processing user command {goal.intent}({goal.target}) ({str(e)})"}
+            results = self._result_format(goal, goal.intent, goal.target, result)
+
+        return result, results
+
     def run_workflow(self, target, plan, result=None, results=None):
         """
         Run tool.
@@ -137,24 +215,71 @@ class SimpleAgent:
         if results is None:
             results = {}
 
-        memory = self.context.access_memory("working")
+        memory = self.context.access_memory()
+        goal = memory.working.current_goal
         current_step = self.context.next_plan_step()
+        success = True
 
         if current_step is not None:
             tool = TOOLS.get(current_step)
-            result = tool.func(target) if tool.requires_input else tool.func()
+            if not tool:
+                if current_step in ALT_ACTION_MAP.values():
+                    if current_step == "cached_content":
+                        content = self._get_cached_content(goal, plan.last_replaced_step, goal.target)
 
-            results.update(self._result_format(memory.current_goal, result))
+                        if not content:
+                            result = {"output_type": "single_dict", "success": False, "result": f"Unable to get cached content, no relevant cache"}
+                            success = False
 
-        if current_step is None:
+                        else:
+                            result = content[0]
+
+                    else:
+                        result = {"output_type": "single_dict", "success": False, "result": f"Unable to fallback {current_step}"}
+                        success = False
+
+                else:
+                    result = {"output_type": "single_dict", "success": False, "result": f"Invalid plan step {current_step}"}
+                    success = False
+
+                if not success:
+                    memory.add_episode(goal, plan.last_replaced_step, result)
+                    return result, results
+
+                results.update(self._result_format(goal, plan.last_replaced_step, target, result))
+                memory.add_episode(goal, plan.last_replaced_step, result)
+
+            else:
+                result = tool.func(target) if tool.requires_input else tool.func()
+                results.update(self._result_format(goal, current_step, target, result))
+
+                memory.add_episode(goal, current_step, result)
+
+            if tool and tool.requires_internet:
+                status = self._connection_check(result["result"]["status"])
+
+                if status != "success":
+                    memory.update_semantic("last_connection_problem", result["result"])
+
+                    if status == "no_connection":
+                        self.context.set_belief("internet_access", False)
+
+                        success = self.replanning(tool, status)
+
+                        if success:
+                            self.context.to_execution()
+
+                    else:
+                        return result, results
+                
+                else:
+                    self.context.set_belief("internet_access", True)
+
+            extracted = self.extract_content(result)
+            return self.run_workflow(extracted, plan, result, results)
+
+        else:
             return result, results
-
-        if not result.get("success"):
-            return result, results
-
-        extracted = self.extract_content(result)
-        
-        return self.run_workflow(extracted, plan, result, results)
         
     def run_agent(self, user_input):
         """
@@ -165,9 +290,9 @@ class SimpleAgent:
 
         if self.context.state == AgentState.WAITING_ANSWER and user_input.strip().isdigit():
             answer = int(user_input.strip())
-            last_problem = memory.search_episode("math_problem")
+            last_problem = memory.search_episode("math_problem", memory.working.current_goal.target)
             if last_problem:
-                last_problem = last_problem[0].actions["math_problem"]
+                last_problem = last_problem[0].result
 
                 if answer == last_problem["answer"]:
                     result = {
@@ -189,22 +314,22 @@ class SimpleAgent:
                 self.goal_reached()
                 memory.update_semantic("total_math_question", 1, "in_place")
 
-                if len(memory.search_episode("math_problem_answer")) >= 3:
+                if len(memory.search_episode("math_problem_answer", memory.working.current_goal.target)) >= 3:
                     semantic = memory.semantic.knowledge
                     if (semantic["math_correct_answer"] / semantic["total_math_question"]) > 0.8:
-                        self.context.set_belief(memory.working.current_goal.shift_belief, True)
+                        self.context.set_belief("user_math_skill_advance", True)
 
                     else:
-                        self.context.set_belief(memory.working.current_goal.shift_belief, False)
+                        self.context.set_belief("user_math_skill_advance", False)
 
             else:
                 result = {
-                    "output_type": "error",
+                    "output_type": "single_dict",
                     "success": False,
                     "result": "No math question"
                 }
 
-            memory.add_episode(memory.working.current_goal, {"math_problem_answer": result})
+            memory.add_episode(memory.working.current_goal, "math_problem_answer", result)
 
             self.context.add_history("agent", str(result))
 
@@ -215,39 +340,8 @@ class SimpleAgent:
         if parse["goal_type"] == "sequence_goal":
             multi_results = {}
             for goal in parse["goal"]:
-                plan = self.planner.create_plan(goal)
-            
-                self.assign_goal(goal)
-                self.assign_plan(plan)
-
-                try:
-                    self.context.to_execution()
-                    result, results = self.run_workflow(goal.target, plan)
-
-                    if result is None:
-                        raise ValueError("Result is None implicating there's no step in the plan")
-
-                    if goal.interactive:
-                        self.context.to_waiting_answer()
-
-                    multi_results.update(results)
-
-                    if self.context.state != AgentState.WAITING_ANSWER:
-                        if result["success"]:
-                            self.goal_reached()
-
-                        else:
-                            self.goal_failed()
-
-                    memory.add_episode(goal, results)
-
-                except Exception as e:
-                    self.goal_failed()
-
-                    result = self._result_format(goal, {"output_type": "error", "success": False, "result": f"Error when processing user command {goal.intent}({goal.target}) ({str(e)})"})
-                    multi_results.update(result)
-
-                    memory.add_episode(goal, result)
+                _, results = self.execute_single_goal(goal)
+                multi_results.update(results)
 
             out = {"output_type": "nested_multi_dict", "result": multi_results}
 
@@ -268,43 +362,13 @@ class SimpleAgent:
 
             return out
 
-        elif parse["goal_type"] == "error":
-            return {"output_type": "error", "success": False, "result": f"Unknown command {user_input}"}
+        elif parse["goal"] == "unknown":
+            return {"output_type": "single_dict", "success": False, "result": f"Unknown command {user_input}"}
 
         
         goal = parse["goal"]
-        plan = self.planner.create_plan(goal)
-
-        try:
-            self.assign_goal(goal)
-            self.assign_plan(plan)
-        
-        except Exception as e:
-            return {"output_type": "error", "success": False, "result": f"Failed to assign plan or goal ({str(e)})"}
-        
-        try:
-            self.context.to_execution()
-            result, results = self.run_workflow(goal.target, plan)
-
-            if result is None:
-                        raise ValueError("Result is None implicating there's no step in the plan")
-
-            if goal.interactive:
-                self.context.to_waiting_answer()
-
-        except Exception as e:
-            self.goal_failed()
-            return {"output_type": "error", "success": False, "result": f"Failed to do {user_input} ({str(e)})"}
-
-
-        if self.context.state != AgentState.WAITING_ANSWER:
-            if result["success"]:
-                self.goal_reached()
-
-            else:
-                self.goal_failed()
+        result, results = self.execute_single_goal(goal)
 
         self.context.add_history("agent", str(results))
-        memory.add_episode(goal, results)
 
         return result

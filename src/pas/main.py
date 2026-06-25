@@ -4,7 +4,7 @@ from rich.console import Console
 import time
 
 def render(result):
-    if result["output_type"] in ["single_dict", "error"]:
+    if result["output_type"] == "single_dict":
         return result["result"]
 
     elif result["output_type"] == "nested_multi_dict":
@@ -69,7 +69,7 @@ def cli_level(lowered, agent):
 
         else:
             return {
-                "output_type": "error",
+                "output_type": "single_dict",
                 "success": False,
                 "result": f"can't access {which}"
             }

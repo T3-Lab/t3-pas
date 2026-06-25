@@ -18,6 +18,7 @@ class AgentPlan():
     steps: list
     output_type: str
     current_step: int = 0
+    last_replaced_step: str=None
 
     
 PLAN_MAP = {
@@ -48,6 +49,12 @@ PLAN_MAP = {
     )
 }
 
+ALT_ACTION_MAP = {
+    ("web_scraper", "no_connection"): "cached_content",
+    ("web_scraper", "retry"): "web_scraper",
+    ("web_scraper", "fallback"): "unknown",
+}
+
 class SimplePlanner:
     def create_plan(self, goal: Goal):
         template = PLAN_MAP.get(goal.intent)
@@ -56,3 +63,18 @@ class SimplePlanner:
             
         plan = deepcopy(template)
         return plan
+    
+    def replan(self, plan: AgentPlan, tool, reason):
+        alt_action = self._get_alt_action(tool, reason)
+        if alt_action is None:
+            return False
+        
+        plan.current_step -= 1
+        plan.last_replaced_step = plan.steps[plan.current_step]
+        plan.steps[plan.current_step] = alt_action
+
+        return True
+    
+    def _get_alt_action(self, tool, reason):
+        alt_action = ALT_ACTION_MAP.get((tool.name, reason))
+        return alt_action

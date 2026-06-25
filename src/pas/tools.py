@@ -7,6 +7,8 @@ from enum import StrEnum, auto
 
 _HAS_REQUESTS = True
 _HAS_BS4 = True
+_HAS_TRANSFORMERS = True
+
 try:
     import requests
 except Exception:
@@ -16,6 +18,14 @@ try:
     from bs4 import BeautifulSoup
 except Exception:
     _HAS_BS4 = False
+
+try:
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    tokenizer = AutoTokenizer.from_pretrained("t5-small")
+    model = AutoModelForSeq2SeqLM.from_pretrained("t5-small")
+
+except Exception:
+    _HAS_TRANSFORMERS = False
 
 def calculator(expression):
     """
@@ -46,7 +56,7 @@ def calculator(expression):
         for n in ast.walk(node):
             if not isinstance(n, allowed_nodes):
                 return {
-                    "output_type": "error",
+                    "output_type": "single_dict",
                     "success": False,
                     "result": "Unsupported expression"
                 }
@@ -62,7 +72,7 @@ def calculator(expression):
 
     except Exception as e:
         return {
-            "output_type": "error",
+            "output_type": "single_dict",
             "success": False,
             "result": str(e)
         }
@@ -94,10 +104,12 @@ def summarizer(text):
     """
     Summarize text using Hugging Face transformers.
     """
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-    
-    tokenizer = AutoTokenizer.from_pretrained("t5-small")
-    model = AutoModelForSeq2SeqLM.from_pretrained("t5-small")
+    if not _HAS_TRANSFORMERS:
+        return {
+            "output_type": "single_dict",
+            "success": False,
+            "result": "Missing optional dependencies: transformers"
+        }
     
     inputs = tokenizer(f"summarize: {text}", return_tensors="pt")
     
@@ -116,22 +128,24 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     Do web scrapping.
     """
     result = {
-        "title": None, 
         "content": None,
+        "status": None
     }
     
     if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        result["content"] = "Invalid URL format"
         return {
-            "output_type": "error",
+            "output_type": "nested_single_dict",
             "success": False,
-            "result": "Invalid URL format"
+            "result": result
         }
 
     if not _HAS_REQUESTS or not _HAS_BS4:
+        result["content"] = "Missing optional dependencies: requests or bs4"
         return {
-            "output_type": "error",
+            "output_type": "nested_single_dict",
             "success": False,
-            "result": "Missing optional dependencies: requests or bs4"
+            "result": result
         }
 
     headers = {
@@ -145,22 +159,17 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
 
     except Exception as e:
         msg = str(e)
-        if "timeout" in msg.lower():
-            result = "Request timeout"
+        result["content"] = msg
 
-        elif "connection" in msg.lower():
-            result = "Connection error"
+        status_code = getattr(e, 'response', None)
+        if status_code is not None and hasattr(status_code, 'status_code'):
+            result["status"] = status_code.status_code
 
         else:
-            status_code = getattr(e, 'response', None)
-            if status_code is not None and hasattr(status_code, 'status_code'):
-                result = f"HTTP Error: {status_code.status_code}"
-
-            else:
-                result = f"Request Error: {msg}"
+            result["status"] = 0
 
         return {
-            "output_type": "error",
+            "output_type": "nested_single_dict",
             "success": False,
             "result": result
         }
@@ -168,15 +177,12 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
     try:
         soup = BeautifulSoup(response.text, "html.parser")
         
-        title_tag = soup.find("title")
-        title = title_tag.get_text(strip=True) if title_tag else "No Title Found"
-        
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
             
         content = soup.get_text(separator="\n", strip=True)
-        result["title"] = title
         result["content"] = content
+        result["status"] = 200
         
         return {
             "output_type": "nested_single_dict",
@@ -185,9 +191,10 @@ def scrape_web(url: str) -> Dict[str, Optional[str]]:
         }
         
     except Exception as parse_err:
-        result = f"Parsing Error: {str(parse_err)}"
+        result["content"] = str(parse_err)
+        result["status"] = -1
         return {
-            "output_type": "error",
+            "output_type": "nested_single_dict",
             "success": False,
             "result": result
         }
@@ -207,6 +214,7 @@ class ToolSpec:
     requires_input: bool
     output_type: str
     category: ToolCategory
+    requires_internet: bool=False
 
 TOOLS = {
     "calculator": ToolSpec(
@@ -234,6 +242,7 @@ TOOLS = {
         name="web_scraper",
         func=scrape_web,
         requires_input=True,
+        requires_internet=True,
         output_type="nested_single_dict",
         category=ToolCategory.WEB_SCRAPING
     )

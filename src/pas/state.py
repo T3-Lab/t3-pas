@@ -20,14 +20,16 @@ class GoalStatus(StrEnum):
 @dataclass
 class Episode:
     goal: str
-    goal_status: GoalStatus
-    actions: dict
+    action: str
+    target: str
+    result: str
     timestamp: float = field(default_factory=time.time)
 
 
 class AgentState(StrEnum):
     IDLE = auto()
     PLANNING = auto()
+    REPLANNING = auto()
     EXECUTING = auto()
     WAITING_ANSWER = auto()
 
@@ -47,7 +49,7 @@ class SemanticMemory:
     def __init__(self):
         self.knowledge = {
             "user_name": None,
-            "internet_request_problem": None,
+            "last_connection_problem": None,
             "math_correct_answer": 0,
             "total_math_question": 0
         }
@@ -68,14 +70,21 @@ class AgentMemory:
     def set_plan(self, plan):
         self.working.current_plan = plan
 
-    def add_episode(self, goal, actions):
-        self.episodic.episodes.append(Episode(goal.intent, goal.status, actions))
+    def add_episode(self, goal, action, result):
+        self.episodic.episodes.append(Episode(goal.intent, action, goal.target, result))
 
-    def search_episode(self, action):
+    def search_episode(self, action, target, only_success=True):
         out = []
         for episode in reversed(self.episodic.episodes):
-            if action in episode.actions.keys():
-                out.append(episode)
+            if action == episode.action and target == episode.target:
+                if only_success and episode.result["success"]:
+                    out.append(episode)
+
+                elif only_success and not episode.result["success"]:
+                    continue
+
+                else:
+                    out.append(episode)
             
         return out
 
@@ -133,6 +142,14 @@ class AgentContext:
         self.state = new_state
         self.add_trace(f"Agent State: {old_state} -> {new_state.name}")
 
+    def set_plan(self, plan):
+        memory = self.access_memory("working")
+        self.memory.set_plan(plan)
+        self.add_trace(f"Plan: \
+                       \n goal: {memory.current_plan.goal} \
+                       \n steps: {memory.current_plan.steps} \
+                       \n output type: {memory.current_plan.output_type}")
+
     def to_execution(self):
         self.transition_to(AgentState.EXECUTING)
 
@@ -158,14 +175,6 @@ class AgentContext:
 
     def add_history(self, role, content):
         self.history.append(ChatMessage(role, content))
-
-    def set_plan(self, plan):
-        memory = self.access_memory("working")
-        self.memory.set_plan(plan)
-        self.add_trace(f"Plan: \
-                       \n goal: {memory.current_plan.goal} \
-                       \n steps: {memory.current_plan.steps} \
-                       \n output type: {memory.current_plan.output_type}")
         
     def set_belief(self, key, value):
         self.belief[key] = value
