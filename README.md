@@ -20,18 +20,13 @@ This is not a framework. It's a documented exploration — built as a personal l
 
 ## How It Works
 
-PAS processes user input in three stages:
+PAS processes user input in four stages:
 
 **1. Parsing** — translates the user's request into a structured `Goal` that the agent can process. This is keyword-based: PAS looks for known command prefixes to determine intent.
 
 **2. Workflow** — once a goal is assigned, the `SimplePlanner` maps it to a predefined sequence of tool steps (`AgentPlan`). The agent executes each step recursively, passing outputs as inputs to the next step. If a step fails, PAS attempts to replan using a fallback map.
 
-**3. State & Memory Update** — after each tool execution, 
-PAS updates its internal state. Results are stored as episodes 
-in episodic memory, key facts persist in semantic memory, and 
-beliefs about the user and environment are revised when evidence 
-warrants it. This is what separates PAS from a stateless 
-input-output pipeline.
+**3. State & Memory Update** — after each tool execution, PAS updates its internal state. Results are stored as episodes in episodic memory, key facts persist in semantic memory, and beliefs about the user and environment are revised when evidence warrants it. This is what separates PAS from a stateless input-output pipeline.
 
 **4. Render** — the final result, stored internally as a typed dictionary, is translated into human-readable output and printed to the terminal.
 
