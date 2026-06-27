@@ -1,4 +1,4 @@
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/sancheck/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/t3-lab/t3-pas/blob/main/LICENSE)
 ![Docs](https://img.shields.io/badge/docs-available-blue)
 
 # PAS — Primitive Agentic System
