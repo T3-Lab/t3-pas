@@ -1,10 +1,72 @@
 {
+  "name": "t3-pas",
+  "version": "1.0.0",
+  "description": "Simple agentic system without machine learning",
   "devDependencies": {
     "@commitlint/cli": "^21.0.2",
     "@commitlint/config-conventional": "^21.0.2",
+    "commit-and-tag-version": "^12.7.3",
     "husky": "^8.0.0"
   },
   "scripts": {
-    "prepare": "husky install"
+    "prepare": "husky",
+    "release": "commit-and-tag-version"
+  },
+  "commit-and-tag-version": {
+    "types": [
+      {
+        "type": "feat",
+        "section": "New Feature"
+      },
+      {
+        "type": "fix",
+        "section": "Bug Fix"
+      },
+      {
+        "type": "docs",
+        "section": "Documentation",
+        "hidden": false
+      },
+      {
+        "type": "chore",
+        "section": "System Maintenance",
+        "hidden": false
+      },
+      {
+        "type": "refactor",
+        "section": "Code Refactor",
+        "hidden": false
+      },
+      {
+        "type": "perf",
+        "section": "Performance Improvement",
+        "hidden": false
+      },
+      {
+        "type": "build",
+        "section": "Build System",
+        "hidden": false
+      },
+      {
+        "type": "ci",
+        "section": "Continuous Integration",
+        "hidden": false
+      },
+      {
+        "type": "test",
+        "section": "Tests",
+        "hidden": false
+      },
+      {
+        "type": "style",
+        "section": "Code Style",
+        "hidden": false
+      },
+      {
+        "type": "revert",
+        "section": "Reverts",
+        "hidden": false
+      }
+    ]
   }
 }
